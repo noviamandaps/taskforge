@@ -143,7 +143,12 @@ function AuthPage() {
         event.preventDefault();
         setBusy(true); setError(""); setNotice("");
         try {
-            if (mode === "signup") {
+            if (mode === "forgot") {
+                const redirectTo = `${(process.env.NEXT_PUBLIC_BASE_URL || window.location.origin).replace(/\/$/, "")}/reset-password`;
+                const { error: e } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+                if (e) throw e;
+                setNotice("Reset link sent. Check your email inbox.");
+            } else if (mode === "signup") {
                 const { data, error: e } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { full_name: name.trim() } } });
                 if (e) throw e;
                 if (!data.session) setNotice("Account created. Check your email to confirm, then sign in.");
@@ -152,6 +157,12 @@ function AuthPage() {
                 if (e) throw e;
             }
         } catch (err) { setError(friendlyError(err)); } finally { setBusy(false); }
+    };
+
+    const headings = {
+        signin: ["Welcome back", "Pick up where your team left off."],
+        signup: ["Start your workspace", "Bring your team, projects, and momentum together."],
+        forgot: ["Reset your password", "Enter your email and we'll send you a reset link."],
     };
 
     return (
@@ -169,18 +180,30 @@ function AuthPage() {
                     <div className="rounded-3xl border border-slate-200/80 bg-white/90 p-7 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.35)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/90 sm:p-9">
                         <div className="mb-8">
                             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-indigo-600 dark:text-indigo-400">Your calm command center</p>
-                            <h1 className="text-2xl font-semibold tracking-tight">{mode === "signin" ? "Welcome back" : "Start your workspace"}</h1>
-                            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">{mode === "signin" ? "Pick up where your team left off." : "Bring your team, projects, and momentum together."}</p>
+                            <h1 className="text-2xl font-semibold tracking-tight">{headings[mode][0]}</h1>
+                            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">{headings[mode][1]}</p>
                         </div>
                         <form className="space-y-4" onSubmit={submit}>
                             {mode === "signup" && <label className="field-label">Name<input className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Alex Morgan" autoComplete="name" required /></label>}
                             <label className="field-label">Email<input className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" autoComplete="email" required /></label>
-                            <label className="field-label">Password<input className="field-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" autoComplete={mode === "signin" ? "current-password" : "new-password"} minLength={6} required /></label>
+                            {mode !== "forgot" && <label className="field-label">Password<input className="field-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" autoComplete={mode === "signin" ? "current-password" : "new-password"} minLength={6} required /></label>}
                             {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm leading-5 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">{error}</div>}
                             {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm leading-5 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">{notice}</div>}
-                            <button className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200" disabled={busy} type="submit">{busy && <Loader2 size={16} className="animate-spin" />}{mode === "signin" ? "Sign in" : "Create workspace"}<ArrowUpRight size={16} /></button>
+                            <button className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200" disabled={busy} type="submit">{busy && <Loader2 size={16} className="animate-spin" />}{mode === "signin" ? "Sign in" : mode === "forgot" ? "Send reset link" : "Create workspace"}<ArrowUpRight size={16} /></button>
                         </form>
-                        <div className="mt-7 flex items-center justify-between border-t border-slate-100 pt-6 text-sm dark:border-slate-800"><span className="text-slate-500 dark:text-slate-400">{mode === "signin" ? "New to Taskforge?" : "Already have an account?"}</span><button className="font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setNotice(""); }} type="button">{mode === "signin" ? "Create account" : "Sign in"}</button></div>
+                        <div className="mt-7 flex items-center justify-between border-t border-slate-100 pt-6 text-sm dark:border-slate-800">
+                            {mode === "forgot" ? (
+                                <button className="font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400" onClick={() => { setMode("signin"); setError(""); setNotice(""); }} type="button">Back to sign in</button>
+                            ) : (
+                                <>
+                                    <span className="text-slate-500 dark:text-slate-400">{mode === "signin" ? "New to Taskforge?" : "Already have an account?"}</span>
+                                    <div className="flex items-center gap-4">
+                                        {mode === "signin" && <button className="font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400" onClick={() => { setMode("forgot"); setError(""); setNotice(""); }} type="button">Forgot password?</button>}
+                                        <button className="font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setNotice(""); }} type="button">{mode === "signin" ? "Create account" : "Sign in"}</button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
                 </section>
             </div>
@@ -272,6 +295,54 @@ function CreateProjectDialog({ open, onClose, workspaceId, userId, onCreated }) 
                     </div>
                 </div>
                 <button type="submit" hidden />
+            </form>
+        </Modal>
+    );
+}
+
+/* ---------- Invite Dialog ---------- */
+// ponytail: invite hanya untuk email yang sudah terdaftar (lookup profiles) —
+// kirim email ke non-user butuh service key + edge function; tambahkan kalau
+// onboarding eksternal jadi prioritas.
+function InviteDialog({ open, onClose, workspaceId, members, onInvited }) {
+    const [email, setEmail] = useState("");
+    const [role, setRole] = useState("member");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => { if (!open) { setEmail(""); setRole("member"); setError(""); setBusy(false); } }, [open]);
+
+    const submit = async (e) => {
+        e.preventDefault();
+        const clean = email.trim().toLowerCase();
+        setBusy(true); setError("");
+        try {
+            const { data: profile } = await supabase.from("profiles").select("id").eq("email", clean).maybeSingle();
+            if (!profile) throw new Error("Email belum terdaftar. Minta orang ini sign up dulu, lalu invite lagi.");
+            if (members.some((m) => m.id === profile.id)) throw new Error("Sudah jadi member workspace ini.");
+            const { error: e2 } = await supabase.from("workspace_members").insert({ workspace_id: workspaceId, user_id: profile.id, role });
+            if (e2) throw new Error(e2.code === "42501" ? "Hanya owner/admin yang bisa invite." : e2.message);
+            onInvited?.();
+            onClose();
+        } catch (err) { setError(err.message); } finally { setBusy(false); }
+    };
+
+    return (
+        <Modal open={open} onClose={onClose} title="Invite to workspace">
+            <form className="space-y-4" onSubmit={submit}>
+                <label className="field-label">Email<input className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" autoComplete="email" required /></label>
+                <label className="field-label">Role
+                    <select className="modal-select" value={role} onChange={(e) => setRole(e.target.value)}>
+                        <option value="admin">Admin — kelola project & member</option>
+                        <option value="member">Member — kerjakan task</option>
+                        <option value="guest">Guest — lihat saja</option>
+                    </select>
+                </label>
+                {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm leading-5 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">{error}</div>}
+                <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" className="soft-button" onClick={onClose}>Cancel</button>
+                    <button type="submit" className="primary-button" disabled={busy}>{busy && <Loader2 size={15} className="animate-spin" />} Add member</button>
+                </div>
             </form>
         </Modal>
     );
@@ -913,7 +984,8 @@ function AppShell({ user, onLogout }) {
     }, []);
 
     const toggleTheme = () => { const next = !dark; setDark(next); document.documentElement.classList.toggle("dark", next); window.localStorage.setItem("taskforge-theme", next ? "dark" : "light"); };
-    const invite = () => window.alert("Invite flow is coming in a later phase.");
+    const [inviteOpen, setInviteOpen] = useState(false);
+    const invite = () => setInviteOpen(true);
 
     const handleProjectCreated = (project) => {
         setProjects((prev) => [...prev, project]);
@@ -985,6 +1057,7 @@ function AppShell({ user, onLogout }) {
                     onNewProject={() => setProjectDialogOpen(true)}
                 />
                 <CreateProjectDialog open={projectDialogOpen} onClose={() => setProjectDialogOpen(false)} workspaceId={activeWorkspace?.id} userId={user.id} onCreated={handleProjectCreated} />
+                <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} workspaceId={activeWorkspace?.id} members={members} onInvited={() => activeWorkspace?.id && loadMembers(activeWorkspace.id)} />
             </div>
         </div>
     );
