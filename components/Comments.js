@@ -63,7 +63,9 @@ function hasContent(json) {
     return walk(json);
 }
 
-function CommentItem({ comment, user, children, onReply, onDelete }) {
+const textOf = (json) => { let out = ""; (function walk(n) { if (!n) return; if (n.type === "text" && n.text) out += n.text + " "; (n.content || []).forEach(walk); })(json); return out; };
+
+function CommentItem({ comment, user, workspaceId, taskTitle, children, onReply, onDelete }) {
     const [replying, setReplying] = useState(false);
     return (
         <div>
@@ -83,7 +85,10 @@ function CommentItem({ comment, user, children, onReply, onDelete }) {
                     </div>
                     {replying && (
                         <div className="mt-2">
-                            <CommentComposer taskId={comment.task_id} user={user} parentId={comment.id} onDone={(reply) => { onReply(reply); setReplying(false); }} onCancel={() => setReplying(false)} placeholder="Reply…" />
+                            <CommentComposer taskId={comment.task_id} user={user} parentId={comment.id} onDone={(reply) => {
+                                onReply(reply); setReplying(false);
+                                if (comment.author_id !== user.id) supabase.from("notifications").insert({ user_id: comment.author_id, workspace_id: workspaceId, task_id: comment.task_id, comment_id: reply.id, actor_id: user.id, type: "comment_reply", metadata: { task_title: taskTitle } });
+                            }} onCancel={() => setReplying(false)} placeholder="Reply…" />
                         </div>
                     )}
                     {children && <div className="mt-3 space-y-3 border-l-2 border-slate-100 pl-4 dark:border-slate-800">{children}</div>}
@@ -93,7 +98,10 @@ function CommentItem({ comment, user, children, onReply, onDelete }) {
     );
 }
 
-export default function Comments({ taskId, user }) {
+// ponytail: mention dicocokkan dari teks "@nama" tanpa picker di editor —
+// first-name match bisa kena orang dengan nama sama. Dropdown beneran?
+// @tiptap/extension-mention sudah terpasang, tinggal disetel di NotionEditor.
+export default function Comments({ taskId, user, workspaceId, taskTitle, members = [], taskAssigneeId }) {
     const [comments, setComments] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -116,7 +124,23 @@ export default function Comments({ taskId, user }) {
 
     useEffect(() => { if (taskId) load(); }, [taskId, load]);
 
-    const addComment = (c) => setComments((prev) => [...prev, c]);
+    const addComment = (c) => {
+        setComments((prev) => [...prev, c]);
+        // Notif funnel: mention (@nama) di semua komentar; root comment -> assignee.
+        // Parent author di-reply sudah dinotif lewat comment_reply — jangan dobel.
+        const text = textOf(c.body).toLowerCase();
+        const parentAuthor = comments.find((x) => x.id === c.parent_id)?.author_id;
+        const targets = new Map();
+        members.forEach((m) => {
+            if (!m.id || m.id === user.id || m.id === parentAuthor) return;
+            const name = (m.full_name || m.email?.split("@")[0] || "").trim().toLowerCase();
+            if (name && (text.includes(`@${name}`) || text.includes(`@${name.split(" ")[0]}`))) targets.set(m.id, "mention");
+        });
+        if (!c.parent_id && taskAssigneeId && taskAssigneeId !== user.id && !targets.has(taskAssigneeId)) targets.set(taskAssigneeId, "comment");
+        targets.forEach((type, uid) => {
+            supabase.from("notifications").insert({ user_id: uid, workspace_id: workspaceId, task_id: c.task_id, comment_id: c.id, actor_id: user.id, type, metadata: { task_title: taskTitle } });
+        });
+    };
     const deleteComment = async (comment) => {
         if (!confirm("Delete this comment?")) return;
         setComments((prev) => prev.filter((c) => c.id !== comment.id && c.parent_id !== comment.id));
@@ -142,9 +166,9 @@ export default function Comments({ taskId, user }) {
             ) : (
                 <div className="space-y-5">
                     {roots.map((c) => (
-                        <CommentItem key={c.id} comment={c} user={user} onReply={addComment} onDelete={deleteComment}>
+                        <CommentItem key={c.id} comment={c} user={user} workspaceId={workspaceId} taskTitle={taskTitle} onReply={addComment} onDelete={deleteComment}>
                             {childrenOf(c.id).map((reply) => (
-                                <CommentItem key={reply.id} comment={reply} user={user} onReply={addComment} onDelete={deleteComment} />
+                                <CommentItem key={reply.id} comment={reply} user={user} workspaceId={workspaceId} taskTitle={taskTitle} onReply={addComment} onDelete={deleteComment} />
                             ))}
                         </CommentItem>
                     ))}

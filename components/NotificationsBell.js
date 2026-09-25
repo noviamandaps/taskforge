@@ -21,6 +21,8 @@ function describe(n, membersById) {
             return { actor, verb: "assigned you a task", detail: n.metadata?.task_title || "" };
         case "comment_reply":
             return { actor, verb: "replied to your comment", detail: n.metadata?.task_title || "" };
+        case "comment":
+            return { actor, verb: "commented on your task", detail: n.metadata?.task_title || "" };
         default:
             return { actor, verb: n.type.replace(/_/g, " "), detail: "" };
     }

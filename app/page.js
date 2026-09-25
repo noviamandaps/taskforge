@@ -28,11 +28,12 @@ import WorkflowGraph from "@/components/WorkflowGraph";
 import AssigneePicker from "@/components/AssigneePicker";
 import ActivityLog from "@/components/ActivityLog";
 import SubtasksAndDependencies from "@/components/SubtasksAndDependencies";
+import SprintView from "@/components/SprintView";
+import NotificationsBell from "@/components/NotificationsBell";
 import {
     Activity,
     ArrowLeft,
     ArrowUpRight,
-    Bell,
     Calendar,
     CalendarDays,
     Check,
@@ -62,6 +63,7 @@ import {
     User as UserIcon,
     Users,
     X,
+    Zap,
 } from "lucide-react";
 
 const supabase = createClient(
@@ -679,7 +681,7 @@ function ListView({ project, tasks, statuses, onOpenTask, onNewTask }) {
 }
 
 /* ---------- Task Panel (side peek) ---------- */
-function TaskPanel({ task, statuses, members, membersById, statusesById, projectTasks, user, onClose, onUpdate, onDelete, onOpenSibling, onTasksMutated }) {
+function TaskPanel({ task, statuses, sprints = [], members, membersById, statusesById, projectTasks, user, workspaceId, onClose, onUpdate, onDelete, onOpenSibling, onTasksMutated }) {
     const [local, setLocal] = useState(task);
     const [saving, setSaving] = useState(false);
     const [savedAt, setSavedAt] = useState(null);
@@ -730,6 +732,15 @@ function TaskPanel({ task, statuses, members, membersById, statusesById, project
                         <input type="date" className="modal-input h-8 w-fit min-w-[140px] py-0" value={local.due_date || ""} onChange={(e) => patch({ due_date: e.target.value || null })} />
                         <span className="text-xs text-slate-500">Assignee</span>
                         <AssigneePicker value={local.assignee_id} members={members} onChange={(uid) => patch({ assignee_id: uid })} />
+                        {sprints.length > 0 && (
+                            <>
+                                <span className="text-xs text-slate-500">Sprint</span>
+                                <select className="modal-select h-8 w-fit min-w-[140px] py-0" value={local.sprint_id || ""} onChange={(e) => patch({ sprint_id: e.target.value || null })}>
+                                    <option value="">No sprint</option>
+                                    {sprints.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                            </>
+                        )}
                     </div>
                     <div className="mt-8">
                         <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Description</p>
@@ -741,7 +752,7 @@ function TaskPanel({ task, statuses, members, membersById, statusesById, project
                     </div>
                     <SubtasksAndDependencies task={task} projectTasks={projectTasks} statuses={statuses} user={user} onOpenTask={onOpenSibling} onTasksMutated={onTasksMutated} />
                     <ActivityLog taskId={task.id} membersById={membersById} statusesById={statusesById} />
-                    <Comments taskId={task.id} user={user} />
+                    <Comments taskId={task.id} user={user} workspaceId={workspaceId} taskTitle={task.title} members={members} taskAssigneeId={task.assignee_id} />
                 </div>
             </aside>
         </>
@@ -752,18 +763,21 @@ function TaskPanel({ task, statuses, members, membersById, statusesById, project
 function ProjectView({ project, user, members, workspaceId, onBack, onTasksChanged, pendingOpenTaskId, clearPendingOpen }) {
     const [statuses, setStatuses] = useState([]);
     const [tasks, setTasks] = useState([]);
+    const [sprints, setSprints] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState("Board");
     const [openTask, setOpenTask] = useState(null);
 
     const load = useCallback(async () => {
         setLoading(true);
-        const [{ data: st }, { data: tk }] = await Promise.all([
+        const [{ data: st }, { data: tk }, { data: sp }] = await Promise.all([
             supabase.from("statuses").select("*").eq("project_id", project.id).order("position"),
             supabase.from("tasks").select("*").eq("project_id", project.id).order("position"),
+            supabase.from("sprints").select("*").eq("project_id", project.id).order("created_at"),
         ]);
         setStatuses(st || []);
         setTasks(tk || []);
+        setSprints(sp || []);
         setLoading(false);
     }, [project.id]);
 
@@ -801,7 +815,7 @@ function ProjectView({ project, user, members, workspaceId, onBack, onTasksChang
     const updateTask = async (updated) => {
         const prev = tasks.find((t) => t.id === updated.id);
         setTasks((prevTasks) => prevTasks.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)));
-        const payload = { title: updated.title, status_id: updated.status_id, priority: updated.priority, due_date: updated.due_date, description: updated.description, assignee_id: updated.assignee_id };
+        const payload = { title: updated.title, status_id: updated.status_id, priority: updated.priority, due_date: updated.due_date, description: updated.description, assignee_id: updated.assignee_id, sprint_id: updated.sprint_id || null };
         const { error } = await supabase.from("tasks").update(payload).eq("id", updated.id);
         if (error) { alert(friendlyError(error)); return; }
         // Log changed fields
@@ -809,8 +823,10 @@ function ProjectView({ project, user, members, workspaceId, onBack, onTasksChang
             if (prev.status_id !== updated.status_id) logActivity(workspaceId, updated.id, user.id, "status_changed", { from: prev.status_id, to: updated.status_id, from_name: statusesById[prev.status_id]?.name, to_name: statusesById[updated.status_id]?.name });
             if (prev.priority !== updated.priority) logActivity(workspaceId, updated.id, user.id, "priority_changed", { from: prev.priority, to: updated.priority });
             if ((prev.assignee_id || null) !== (updated.assignee_id || null)) {
-                if (updated.assignee_id) logActivity(workspaceId, updated.id, user.id, "assigned", { to: updated.assignee_id });
-                else logActivity(workspaceId, updated.id, user.id, "unassigned", {});
+                if (updated.assignee_id) {
+                    logActivity(workspaceId, updated.id, user.id, "assigned", { to: updated.assignee_id });
+                    if (updated.assignee_id !== user.id) supabase.from("notifications").insert({ user_id: updated.assignee_id, workspace_id: workspaceId, task_id: updated.id, actor_id: user.id, type: "assigned", metadata: { task_title: updated.title } });
+                } else logActivity(workspaceId, updated.id, user.id, "unassigned", {});
             }
             if ((prev.due_date || null) !== (updated.due_date || null)) logActivity(workspaceId, updated.id, user.id, "due_changed", { to: updated.due_date });
             if (prev.title !== updated.title) logActivity(workspaceId, updated.id, user.id, "title_changed", {});
@@ -858,6 +874,7 @@ function ProjectView({ project, user, members, workspaceId, onBack, onTasksChang
                             { id: "Table", icon: Table2 },
                             { id: "Timeline", icon: CalendarDays },
                             { id: "Workflow", icon: GitBranch },
+                            { id: "Sprints", icon: Zap },
                         ].map(({ id, icon: Icon }) => (
                             <button key={id} className={`tab-button ${activeTab === id ? "active" : ""}`} onClick={() => setActiveTab(id)}><Icon size={14} /> {id}</button>
                         ))}
@@ -877,9 +894,11 @@ function ProjectView({ project, user, members, workspaceId, onBack, onTasksChang
                     <TimelineView project={project} tasks={enrichedTasks} statuses={statuses} onOpenTask={openTaskFull} />
                 ) : activeTab === "Workflow" ? (
                     <WorkflowGraph project={project} statuses={statuses} tasks={enrichedTasks} />
+                ) : activeTab === "Sprints" ? (
+                    <SprintView project={project} tasks={enrichedTasks} statuses={statuses} sprints={sprints} refreshSprints={load} onOpenTask={openTaskFull} />
                 ) : null}
             </div>
-            {openTask && <TaskPanel task={openTask} statuses={statuses} members={members} membersById={membersById} statusesById={statusesById} projectTasks={enrichedTasks} user={user} onClose={() => setOpenTask(null)} onUpdate={updateTask} onDelete={deleteTask} onOpenSibling={openTaskFull} onTasksMutated={load} />}
+            {openTask && <TaskPanel task={openTask} statuses={statuses} sprints={sprints} members={members} membersById={membersById} statusesById={statusesById} projectTasks={enrichedTasks} user={user} workspaceId={workspaceId} onClose={() => setOpenTask(null)} onUpdate={updateTask} onDelete={deleteTask} onOpenSibling={openTaskFull} onTasksMutated={load} />}
         </div>
     );
 }
@@ -999,6 +1018,8 @@ function AppShell({ user, onLogout }) {
         setPendingOpenTaskId(task.id);
     };
 
+    const membersById = useMemo(() => Object.fromEntries(members.map((m) => [m.id, m])), [members]);
+
     return (
         <div className="flex min-h-screen bg-[#f7f8fa] text-slate-950 dark:bg-[#0b0d10] dark:text-white">
             <Sidebar
@@ -1022,7 +1043,7 @@ function AppShell({ user, onLogout }) {
                         <button className="search-trigger" onClick={() => setCommandOpen(true)}><Search size={15} /><span>Search anything</span><kbd>⌘ K</kbd></button>
                     </div>
                     <div className="relative flex items-center gap-1.5">
-                        <button className="icon-button" aria-label="Notifications"><Bell size={17} /></button>
+                        <NotificationsBell user={user} workspaceId={activeWorkspace?.id} membersById={membersById} onOpenTask={(taskId) => { const t = allTasks.find((x) => x.id === taskId); if (t) openTaskFromSearch(t); }} />
                         <button className="icon-button" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
                         <div className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-800" />
                         <button className="primary-button" onClick={() => setCreateOpen(!createOpen)}><Plus size={15} /> <span className="hidden sm:inline">Create</span></button>
